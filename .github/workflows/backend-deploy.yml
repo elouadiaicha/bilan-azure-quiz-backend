@@ -40,10 +40,7 @@ jobs:
         shell: bash
         run: |
           WEBAPP_NAME=$(az resource list \
-            --resource-type "Microsoft.Web/sites" \
-            --tag Owner=aelouadi \
-            --tag Project=Azure-Quiz \
-            --query "[0].name" \
+            --query "[?type=='Microsoft.Web/sites' && tags.Owner=='aelouadi' && tags.Project=='Azure-Quiz'].name | [0]" \
             --output tsv)
 
           if [ -z "$WEBAPP_NAME" ]; then
@@ -51,6 +48,7 @@ jobs:
             exit 1
           fi
 
+          echo "Backend App Service found: $WEBAPP_NAME"
           echo "name=$WEBAPP_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to Azure App Service
