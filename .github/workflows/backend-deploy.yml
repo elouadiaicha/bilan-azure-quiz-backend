@@ -1,0 +1,60 @@
+name: Backend Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Build and Deploy Backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build application
+        run: ./mvnw clean package -DskipTests
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Find backend App Service by tags
+        id: webapp
+        shell: bash
+        run: |
+          WEBAPP_NAME=$(az resource list \
+            --resource-type "Microsoft.Web/sites" \
+            --tag Owner=aelouadi \
+            --tag Project=Azure-Quiz \
+            --query "[0].name" \
+            --output tsv)
+
+          if [ -z "$WEBAPP_NAME" ]; then
+            echo "No backend App Service found"
+            exit 1
+          fi
+
+          echo "name=$WEBAPP_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ steps.webapp.outputs.name }}
+          package: target/*.jar
