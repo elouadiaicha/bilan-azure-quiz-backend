@@ -1,122 +1,571 @@
-# azure-quiz-backend
+# Azure Quiz - Backend
 
-Spring Boot REST API for the Microsoft Azure certifications revision app (AZ-900 to start, other certifications
-like AZ-104 can be added later with no schema change — see "Data model" below).
+Backend Spring Boot de l'application **Azure Quiz**, une application permettant de réviser les certifications Microsoft Azure à travers des modules de révision et des examens blancs.
 
+Le backend expose une API REST consommée par le frontend Angular et s'appuie sur plusieurs services Azure : PostgreSQL, Azure Managed Redis, Azure Blob Storage et Azure Key Vault.
 
-## Stack
+L'application est déployée dans un environnement **non-production Azure**.
 
-- Java 21, Spring Boot 3.5.x, Maven
-- Spring Web, Spring Data JPA, PostgreSQL, Flyway, Bean Validation, Lombok, Actuator
-- Spring Data Redis (cache — see "Running locally" below)
-- Spring Cloud Azure Storage Blob (quiz result export — see "Running locally" below)
-- springdoc-openapi (Swagger UI)
-- Tests: JUnit 5, Mockito, AssertJ
+---
 
-## Running locally
+## Stack technique
 
-Prerequisites: JDK 21, Docker (Desktop or Engine) running.
+- Java 21
+- Spring Boot 3.5.x
+- Maven
+- Spring Web
+- Spring Data JPA
+- PostgreSQL
+- Flyway
+- Spring Data Redis
+- Azure Managed Redis
+- Spring Cloud Azure Storage Blob
+- Azure Blob Storage
+- Azure Managed Identity
+- Bean Validation
+- Lombok
+- Spring Boot Actuator
+- springdoc-openapi / Swagger
+- JUnit 5
+- Mockito
+- AssertJ
+- GitHub Actions
 
-```bash
-./mvnw spring-boot:run    # starts the API on http://localhost:8080
+---
+
+## Architecture applicative
+
+Le backend est hébergé dans une **Azure Linux Web App** utilisant l'**App Service Plan mutualisé fourni dans le cadre de la formation**.
+
+Le frontend Angular est hébergé séparément sur Azure Static Web Apps et communique avec le backend via HTTPS.
+
+Le backend utilise :
+
+- **Azure Database for PostgreSQL Flexible Server** pour les données persistantes ;
+- **Azure Managed Redis** pour le cache ;
+- **Azure Blob Storage** pour l'export des résultats de quiz ;
+- **Azure Key Vault** pour la gestion des secrets et informations sensibles ;
+- une **Managed Identity** pour accéder aux ressources Azure lorsque cela est possible.
+
+### Vue simplifiée
+
+```text
+                    Internet
+                       |
+                       v
+             Azure Static Web Apps
+                Frontend Angular
+                       |
+                       | HTTPS / REST
+                       | X-Api-Key
+                       | CORS restreint
+                       v
+          +--------------------------------+
+          | App Service Plan mutualisé     |
+          | plan-npr-prf2026               |
+          |                                |
+          |   Azure Linux Web App          |
+          |   Spring Boot - Java 21        |
+          |   Backend REST API             |
+          +--------------------------------+
+                |        |        |
+                |        |        |
+                v        v        v
+          PostgreSQL    Redis    Blob Storage
+                                quiz-files
+
+                       |
+                       v
+                   Key Vault
 ```
 
-That's it — a plain `./mvnw spring-boot:run`, or hitting "Run" on `AzureQuizBackendApplication` in
-your IDE, is enough on its own. The `spring-boot-docker-compose` dependency (pom.xml) detects
-`docker-compose.yml` at the project root and automatically starts Postgres + Redis + Azurite (a
-local Azure Blob Storage emulator) for you before the app context loads, then stops them when the
-app stops — no manual `docker compose up -d` step. It's marked `optional`, so it never ships in the
-production jar deployed to Azure App Service; this convenience is dev-only.
+---
 
-If you'd rather manage the containers yourself (e.g. keep them running across multiple app restarts
-instead of stopping them every time), that still works exactly as before:
+## Schéma d'architecture
+
+Le schéma ci-dessous représente l'architecture conçue initialement avant l'implémentation et les ajustements réalisés lors du déploiement Azure.
+
+![Schéma d'architecture Azure Quiz](docs/architecture-backend.png)
+
+### Évolution par rapport au schéma initial
+
+L'architecture initialement envisagée prévoyait une isolation réseau plus stricte reposant notamment sur un réseau virtuel, des sous-réseaux et des mécanismes d'accès privés aux ressources Azure.
+
+Lors de l'implémentation, certaines contraintes liées à l'environnement mutualisé de formation et à l'intégration des services managés Azure ont nécessité une adaptation de cette architecture.
+
+L'architecture finalement déployée conserve l'**App Service Plan mutualisé** fourni par le formateur et utilise une Azure Linux Web App pour héberger le backend Spring Boot.
+
+Azure Static Web Apps devant communiquer avec une origine publique dans cette architecture, l'isolation réseau stricte du backend initialement envisagée n'a pas été conservée.
+
+Le contrôle d'accès a donc été renforcé au niveau applicatif avec :
+
+- une politique **CORS limitée à l'origine exacte du frontend Azure Static Web Apps** ;
+- une **clé API partagée**, transmise dans l'en-tête `X-Api-Key` et vérifiée par le backend ;
+- des règles réseau spécifiques sur les services de données ;
+- une Managed Identity et des autorisations RBAC pour l'accès au Blob Storage.
+
+Cette évolution correspond à l'exception prévue dans le cahier des charges pour une architecture basée sur les services managés Azure.
+
+---
+
+## URLs non-production
+
+### Backend
+
+```text
+https://app-quiz-backend-aelouadi.azurewebsites.net
+```
+
+### Swagger
+
+```text
+https://app-quiz-backend-aelouadi.azurewebsites.net/swagger-ui/index.html
+```
+
+### Health check
+
+```text
+https://app-quiz-backend-aelouadi.azurewebsites.net/actuator/health
+```
+
+### Frontend
+
+```text
+https://gentle-moss-091704803.7.azurestaticapps.net
+```
+
+---
+
+## Fonctionnement de l'application
+
+Le modèle de données principal est :
+
+```text
+Certification
+     |
+     v
+Module
+     |
+     v
+Question
+     |
+     v
+Answer Option
+```
+
+Une session de quiz est liée à une certification.
+
+En mode révision, elle peut être associée à un module spécifique.
+
+En mode examen, les questions sont sélectionnées parmi les modules actifs de la certification.
+
+Les migrations de base de données sont gérées avec **Flyway** dans :
+
+```text
+src/main/resources/db/migration
+```
+
+---
+
+## API REST
+
+### Certifications
+
+```http
+GET /api/certifications
+```
+
+Retourne les certifications disponibles.
+
+### Modules
+
+```http
+GET /api/certifications/{certificationId}/modules
+```
+
+Retourne les modules d'une certification ainsi que le nombre de questions actives et leur type.
+
+### Création d'une session
+
+```http
+POST /api/quiz-sessions
+```
+
+Exemple en mode module :
+
+```json
+{
+  "mode": "MODULE",
+  "moduleId": "...",
+  "questionCount": 10
+}
+```
+
+Exemple en mode examen :
+
+```json
+{
+  "mode": "EXAM",
+  "certificationId": "...",
+  "questionCount": 40
+}
+```
+
+La réponse contient les questions et leurs différentes options sans indiquer directement la bonne réponse.
+
+### Répondre à une question
+
+```http
+POST /api/quiz-sessions/{sessionId}/questions/{questionId}/answer
+```
+
+Retourne notamment le résultat de la réponse ainsi que l'explication associée.
+
+### Résultat
+
+```http
+GET /api/quiz-sessions/{sessionId}/result
+```
+
+Calcule le résultat final et déclenche également son export vers Azure Blob Storage.
+
+### Export du résultat
+
+```http
+GET /api/quiz-sessions/{sessionId}/result/export
+```
+
+Permet de télécharger le résultat exporté.
+
+---
+
+## PostgreSQL
+
+La base de données utilise **Azure Database for PostgreSQL Flexible Server** dans l'environnement non-production.
+
+Spring Data JPA est utilisé pour l'accès aux données.
+
+Flyway applique automatiquement les migrations nécessaires au démarrage de l'application.
+
+PostgreSQL reste la source de vérité pour les données et les résultats des quiz.
+
+Les informations de connexion ne sont pas écrites directement dans le code source.
+
+---
+
+## Azure Managed Redis
+
+Azure Managed Redis est utilisé comme cache applicatif.
+
+Il est notamment utilisé pour :
+
+```text
+CertificationService.getAllCertifications()
+ModuleService.getModulesByCertification()
+```
+
+Ces données sont mises en cache avec `@Cacheable`.
+
+Les entrées expirent après 30 minutes.
+
+En local, l'application utilise le conteneur Redis défini dans `docker-compose.yml`.
+
+En Azure, la connexion utilise TLS et les paramètres nécessaires sont injectés dans la configuration de l'App Service.
+
+---
+
+## Azure Blob Storage
+
+Le Storage Account est utilisé pour exporter les résultats des quiz au format JSON.
+
+Le conteneur utilisé dans l'environnement non-production est :
+
+```text
+quiz-files
+```
+
+Le backend utilise sa **Managed Identity** pour accéder au Blob Storage.
+
+L'identité de l'Azure Web App dispose du rôle Azure approprié sur le stockage, ce qui évite d'utiliser directement une clé du Storage Account dans l'application.
+
+Une indisponibilité temporaire du Blob Storage ne bloque pas le fonctionnement du quiz : PostgreSQL reste la source de vérité.
+
+---
+
+## Sécurité du backend
+
+### CORS
+
+Le backend n'autorise pas arbitrairement toutes les origines.
+
+Dans l'environnement non-production, l'origine autorisée correspond à l'URL exacte du frontend Azure Static Web Apps :
+
+```text
+https://gentle-moss-091704803.7.azurestaticapps.net
+```
+
+Cette configuration est injectée dans l'App Service par Terraform.
+
+### Clé API
+
+Les appels `/api/**` sont protégés par une clé API partagée.
+
+Le frontend transmet cette clé dans l'en-tête HTTP :
+
+```http
+X-Api-Key: <key>
+```
+
+Le backend vérifie cette valeur avant d'autoriser l'accès aux endpoints protégés.
+
+La clé API réelle n'est pas écrite en dur dans le code source.
+
+### Managed Identity
+
+L'Azure Linux Web App possède une **System Assigned Managed Identity**.
+
+Elle est notamment utilisée pour accéder au Blob Storage grâce aux autorisations RBAC Azure.
+
+### Secrets
+
+Les secrets ne doivent jamais être committés dans le dépôt Git.
+
+Les informations sensibles sont gérées par la configuration Azure, Terraform et Azure Key Vault.
+
+---
+
+## Variables d'environnement
+
+Les principales variables utilisées dans l'environnement Azure sont :
+
+| Variable | Description |
+|---|---|
+| `SPRING_PROFILES_ACTIVE` | Active le profil `prod` |
+| `SPRING_DATASOURCE_URL` | URL JDBC PostgreSQL |
+| `SPRING_DATASOURCE_USERNAME` | Utilisateur PostgreSQL |
+| `SPRING_DATASOURCE_PASSWORD` | Mot de passe PostgreSQL |
+| `REDIS_HOSTNAME` | Host Azure Managed Redis |
+| `REDIS_PORT` | Port Redis |
+| `REDIS_PASSWORD` | Clé d'accès Redis |
+| `REDIS_SSL_ENABLED` | Active TLS pour Redis |
+| `STORAGE_ACCOUNT_NAME` | Nom du Storage Account |
+| `STORAGE_CONTAINER_NAME` | Conteneur Blob utilisé pour les exports |
+| `BACKEND_API_KEY` | Clé API partagée avec le frontend |
+| `APP_CORS_ALLOWED_ORIGINS` | Origine frontend autorisée par CORS |
+
+Ces valeurs sont injectées dans l'Azure App Service par l'infrastructure Terraform.
+
+---
+
+## Exécution locale
+
+### Prérequis
+
+- JDK 21
+- Docker
+- Maven Wrapper fourni avec le projet
+
+Le projet utilise `spring-boot-docker-compose`.
+
+Un simple :
 
 ```bash
-docker compose up -d      # starts Postgres + Redis + Azurite (see docker-compose.yml)
 ./mvnw spring-boot:run
 ```
 
-Flyway applies the migrations (`src/main/resources/db/migration`) on startup, including the real content for
-AZ-900 modules 1 to 6 (`V2` to `V7`, 45 questions per module: 30 standard questions + 15 scenario questions).
-The 30 standard questions per module come from the trainer's answer key; the 15 scenario questions have no
-written answer key (the trainer corrects them live) — their answers were determined from AZ-900 fundamentals
-and deserve a quick review before use in training. One inconsistency was found and fixed in the trainer's
-answer key: Module 1 Q8 marked "SaaS" as the answer while the explanation clearly describes PaaS — the
-objectively correct answer (PaaS) was imported.
+permet de démarrer l'application.
 
-Six official mock exams (`V9` to `V14`, AZ900_Test_A to F, 50 questions each with answers/explanations
-included in the same source document) are imported as modules of type `MOCK_EXAM` (`type` column on
-`module`, migration `V8`). They stay strictly independent from each other and from course modules: the
-random exam mode (`EXAM`) only draws from modules of type `CONTENT` (see
-`QuestionRepository.findRandomActiveByCertification`).
+Spring Boot détecte le fichier :
 
-`docker-compose up -d` also starts a local Redis (no auth, plaintext) backing
-`CertificationService.getAllCertifications()` and `ModuleService.getModulesByCertification()`, both
-`@Cacheable` (see `CacheConfig` for why values are JSON-serialized rather than the JDK-serialization
-default). Entries expire after 30 minutes; there's no explicit eviction on writes, since the underlying
-data (certifications/modules) only ever changes via a new Flyway migration, not through the running app.
+```text
+docker-compose.yml
+```
 
-Every call to `GET /api/quiz-sessions/{sessionId}/result` also exports that result as a JSON blob
-(`QuizResultExportService`), downloadable again through `GET /api/quiz-sessions/{sessionId}/result/export`
-— the simplest concrete use of the Storage Account provisioned for this TP. Locally this goes to Azurite;
-in prod, to the `java-uploads-<owner>` container (Terraform's `storage-java.tf`), authenticated via this
-Web App's managed identity, no account key involved either way (`shared_access_key_enabled = false` on
-the account). A Storage outage never breaks the quiz itself — the export failing is only logged, not
-thrown; Postgres stays the source of truth for results.
+et peut démarrer automatiquement les services nécessaires au développement local :
 
-Swagger UI: http://localhost:8080/swagger-ui.html
+- PostgreSQL ;
+- Redis ;
+- Azurite.
+
+Il est également possible de gérer manuellement les conteneurs :
+
+```bash
+docker compose up -d
+./mvnw spring-boot:run
+```
+
+L'API locale est alors disponible sur :
+
+```text
+http://localhost:8080
+```
+
+Swagger est disponible sur :
+
+```text
+http://localhost:8080/swagger-ui.html
+```
+
+---
 
 ## Tests
+
+Pour exécuter les tests :
 
 ```bash
 ./mvnw test
 ```
 
-## Environment variables (production)
+Le projet utilise notamment :
 
-The `default` profile (active locally) defines a localhost datasource in `application.yml`. In production,
-set these environment variables (e.g. Azure App Service) — they directly override the corresponding Spring
-properties, no extra profile needs activating:
+- JUnit 5 ;
+- Mockito ;
+- AssertJ.
 
-| Variable | Description |
-|---|---|
-| `SPRING_DATASOURCE_URL` | PostgreSQL JDBC URL, e.g. `jdbc:postgresql://<host>:5432/azurequiz` |
-| `SPRING_DATASOURCE_USERNAME` | PostgreSQL user |
-| `SPRING_DATASOURCE_PASSWORD` | PostgreSQL password |
-| `APP_CORS_ALLOWED_ORIGINS` | Allowed origin(s), e.g. the frontend Static Web App URL |
-| `REDIS_HOSTNAME` | Redis host, e.g. Azure Managed Redis's hostname |
-| `REDIS_PORT` | Redis port. Defaults to `6379` (docker-compose) locally; Azure Managed Redis exposes a different port, see the infra repo's `redis.tf` |
-| `REDIS_PASSWORD` | Redis access key. Empty locally (docker-compose's Redis has no auth) |
-| `REDIS_SSL_ENABLED` | `true` in prod (Azure Managed Redis requires TLS), `false` locally |
-| `BACKEND_API_KEY` | Shared secret the frontend must send as `X-Api-Key` (see `ApiKeyFilter`). Left unset locally — the check is skipped. In prod it's injected from Key Vault (see `app-service-java.tf` / `keyvault.tf` in the infra repo). |
-| `STORAGE_ACCOUNT_NAME` | Storage Account name. Authenticated via this Web App's managed identity (no key) — see `SPRING_PROFILES_ACTIVE` below for why |
-| `STORAGE_CONTAINER_NAME` | Blob container for quiz result exports, e.g. `java-uploads-<owner>` |
-| `SPRING_PROFILES_ACTIVE` | Set to `prod` by Terraform. Deactivates the `default` profile's local-only settings (localhost datasource, Azurite connection string) — without it, Blob Storage would try to reach a local Azurite that doesn't exist in Azure |
+---
 
-## Data model
+## CI/CD
 
-`certification` (e.g. AZ-900, AZ-104...) → `module` → `question` → `answer_option`. A quiz session
-(`quiz_session`) is tied to a certification and, in review mode, to a specific module; in exam mode,
-questions are drawn randomly from all active modules of the chosen certification.
+Le projet utilise **GitHub Actions**.
 
-Adding a new certification requires no schema migration: just insert a row into `certification` and its
-associated modules/questions (a dedicated Flyway migration, generated from the supplied content).
+Les workflows se trouvent dans :
 
-## API contract
+```text
+.github/workflows/
+```
 
-- `GET /api/certifications` — list of available certifications
-- `GET /api/certifications/{certificationId}/modules` — modules of a certification, with active question count and `type` (`CONTENT` or `MOCK_EXAM`)
-- `POST /api/quiz-sessions` — creates a session
-  - `MODULE` mode: `{ "mode": "MODULE", "moduleId": "..." , "questionCount": 10 }` (`questionCount` optional, otherwise all active questions in the module)
-  - `EXAM` mode: `{ "mode": "EXAM", "certificationId": "...", "questionCount": 40 }` (`questionCount` optional, default 40)
-  - the response contains the questions and their options **without** indicating the correct answer
-- `POST /api/quiz-sessions/{sessionId}/questions/{questionId}/answer` — submits an answer, returns whether it's correct + the correct options + the explanation
-- `GET /api/quiz-sessions/{sessionId}/result` — final aggregated score for the session; also exports it as a JSON blob (see "Running locally")
-- `GET /api/quiz-sessions/{sessionId}/result/export` — downloads that exported blob (404 if `result` was never called for this session)
+### Intégration continue
 
+```text
+backend-ci.yml
+```
 
-## Out of scope for this repo
+Ce workflow réalise les contrôles automatisés du backend.
 
-- Provisioning Azure infrastructure (App Service, Static Web App, PostgreSQL Flexible Server)
-- Importing the real question content (supplied separately, converted into Flyway migrations).
+### Déploiement
 
+```text
+backend-deploy.yml
+```
+
+Le workflow de déploiement :
+
+1. récupère le code source ;
+2. configure Java 21 ;
+3. construit l'application avec Maven ;
+4. s'authentifie auprès d'Azure avec **OIDC** ;
+5. recherche l'Azure App Service à partir de ses **tags Azure** ;
+6. déploie le fichier JAR sur l'App Service.
+
+La Web App n'est donc pas identifiée par un nom codé en dur dans le workflow de déploiement.
+
+La recherche s'appuie notamment sur les tags :
+
+```text
+Owner = aelouadi
+Project = Azure-Quiz
+```
+
+---
+
+## Authentification GitHub Actions vers Azure
+
+L'authentification CI/CD utilise **OpenID Connect (OIDC)**.
+
+Les paramètres nécessaires à l'authentification sont enregistrés dans les GitHub Actions Secrets :
+
+```text
+AZURE_CLIENT_ID
+AZURE_TENANT_ID
+AZURE_SUBSCRIPTION_ID
+```
+
+Une Federated Credential Azure permet à GitHub Actions de s'authentifier auprès d'Azure sans stocker de client secret Azure permanent dans le dépôt.
+
+---
+
+## Analyse de sécurité
+
+Un workflow dédié est présent :
+
+```text
+.github/workflows/security.yml
+```
+
+Il exécute **Gitleaks** lors des push et des Pull Requests vers `main`.
+
+Gitleaks analyse l'historique du dépôt afin de détecter d'éventuels secrets ou identifiants accidentellement committés.
+
+---
+
+## Gestion automatique des dépendances
+
+Dependabot est configuré dans :
+
+```text
+.github/dependabot.yml
+```
+
+Il permet de surveiller les dépendances du projet et de proposer automatiquement leurs mises à jour selon la configuration définie dans le dépôt.
+
+---
+
+## Gouvernance Git
+
+Le dépôt applique plusieurs pratiques de gouvernance :
+
+- commits signés et vérifiés avec le badge GitHub `Verified` ;
+- branche `main` protégée ;
+- utilisation de Pull Requests ;
+- fichier `CODEOWNERS` ;
+- Dependabot ;
+- scan de secrets avec Gitleaks ;
+- CI automatisée.
+
+Le propriétaire par défaut du dépôt est défini dans :
+
+```text
+CODEOWNERS
+```
+
+---
+
+## Organisation des dépôts
+
+Le projet est séparé en trois dépôts :
+
+```text
+bilan-azure-quiz-frontend
+bilan-azure-quiz-backend
+bilan-azure-quiz-terraform
+```
+
+Ce dépôt contient uniquement le **backend Spring Boot**.
+
+Le frontend Angular est développé et déployé depuis son propre dépôt.
+
+L'infrastructure Azure est provisionnée et configurée depuis le dépôt Terraform.
+
+---
+
+## Infrastructure
+
+Le provisionnement des ressources Azure est hors du périmètre de ce dépôt.
+
+Il est géré avec Terraform dans :
+
+```text
+bilan-azure-quiz-terraform
+```
+
+L'environnement Azure comprend notamment :
+
+- Azure Static Web Apps ;
+- Azure Linux Web App ;
+- App Service Plan mutualisé ;
+- Azure Database for PostgreSQL Flexible Server ;
+- Azure Managed Redis ;
+- Azure Storage Account ;
+- Azure Key Vault ;
+- Managed Identity et RBAC ;
+- règles réseau nécessaires à la communication entre les différents composants.
