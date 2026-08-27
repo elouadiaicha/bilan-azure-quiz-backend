@@ -82,6 +82,16 @@ spring:
   config:
     activate:
       on-profile: prod
+     
+     
+  datasource:
+    hikari:
+      max-lifetime: 240000
+      idle-timeout: 120000
+      keepalive-time: 60000
+      validation-timeout: 5000
+
+
   cloud:
     azure:
       credential:
