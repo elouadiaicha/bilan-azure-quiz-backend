@@ -1,0 +1,42 @@
+name: SAST - SonarQube
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sonar:
+    name: SonarQube SAST
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build, test and analyze with SonarQube
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: >
+          ./mvnw clean verify
+          org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
+          -Dsonar.projectKey=elouadiaicha_bilan-azure-quiz-backend
+          -Dsonar.organization=elouadiaicha
