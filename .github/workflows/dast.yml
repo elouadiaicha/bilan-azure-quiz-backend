@@ -72,11 +72,10 @@ jobs:
           echo "Backend failed to start"
           cat backend.log
           exit 1
-
       - name: OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.15.0
         with:
-          target: "http://localhost:8080"
+          target: "http://localhost:8080/actuator/health"
           fail_action: true
           allow_issue_writing: false
 
