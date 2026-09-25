@@ -21,6 +21,8 @@
 		<!-- AZURE -->
 		<spring-cloud-azure-dependencies.version>7.3.0</spring-cloud-azure-dependencies.version>
 		<azure-functions-maven-plugin.version>1.42.0</azure-functions-maven-plugin.version>
+		<netty.version>4.1.137.Final</netty.version>
+		<postgresql.version>42.7.13</postgresql.version>
 	</properties>
 
 	<dependencies>
