@@ -1,0 +1,100 @@
+name: DAST - OWASP ZAP
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zap:
+    name: OWASP ZAP Baseline Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Start local dependencies
+        run: docker compose up -d postgres redis azurite
+
+      - name: Wait for PostgreSQL and Redis
+        shell: bash
+        run: |
+          for i in {1..30}; do
+            if docker compose exec -T postgres pg_isready -U quizz -d quizz &&
+               docker compose exec -T redis redis-cli ping | grep -q PONG; then
+              echo "Dependencies are ready"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker compose ps
+          exit 1
+
+      - name: Build application
+        run: ./mvnw clean package -DskipTests
+
+      - name: Start backend
+        shell: bash
+        run: |
+          nohup java -jar target/azure-quiz-backend-*.jar \
+            > backend.log 2>&1 &
+          echo $! > backend.pid
+
+      - name: Wait for backend
+        shell: bash
+        run: |
+          for i in {1..60}; do
+            if curl --fail --silent http://localhost:8080/actuator/health; then
+              echo "Backend is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Backend failed to start"
+          cat backend.log
+          exit 1
+
+      - name: OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.15.0
+        with:
+          target: "http://localhost:8080"
+          fail_action: true
+          allow_issue_writing: false
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: zap-report
+          path: |
+            report_html.html
+            report_json.json
+            report_md.md
+          if-no-files-found: ignore
+
+      - name: Show backend logs on failure
+        if: failure()
+        run: cat backend.log || true
+
+      - name: Stop local environment
+        if: always()
+        run: docker compose down -v
