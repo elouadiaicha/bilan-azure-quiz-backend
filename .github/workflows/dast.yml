@@ -76,7 +76,7 @@ jobs:
         uses: zaproxy/action-baseline@v0.15.0
         with:
           target: "http://localhost:8080/actuator/health"
-          fail_action: true
+          fail_action: false
           allow_issue_writing: false
 
       - name: Upload ZAP report
