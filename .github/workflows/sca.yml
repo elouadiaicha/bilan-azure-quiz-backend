@@ -34,9 +34,12 @@ jobs:
         run: ./mvnw clean package -DskipTests
 
       - name: Run OWASP Dependency Check
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: >
           ./mvnw
           org.owasp:dependency-check-maven:check
+          -DnvdApiKeyEnvironmentVariable=NVD_API_KEY
           -DfailBuildOnCVSS=9
 
       - name: Upload Dependency Check report
