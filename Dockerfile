@@ -28,6 +28,10 @@ RUN ./mvnw -B clean package -DskipTests
 # JRE, not JDK -- smaller image, no compiler needed to run a prebuilt jar.
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
+# Apply the latest Ubuntu security updates required by the runtime image.
+RUN apt-get update \
+    && apt-get install --only-upgrade -y --no-install-recommends openssl libssl3 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Runs as non-root -- AKS's default Pod Security Standards (baseline/restricted,
 # commonly enforced via namespace labels) reject containers that try to run as
