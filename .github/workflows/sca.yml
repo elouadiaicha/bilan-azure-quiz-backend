@@ -2,13 +2,9 @@ name: SCA - OWASP Dependency Check
 
 on:
   push:
-    branches:
-      - main
-
+    branches: [main]
   pull_request:
-    branches:
-      - main
-
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -30,14 +26,13 @@ jobs:
           java-version: "21"
           cache: maven
 
+      # Cache persistant de la base NVD utilisée par OWASP Dependency-Check.
+      # La clé reste identique entre les différents runs.
       - name: Restore OWASP Dependency Check database
-        id: dependency-check-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache@v4
         with:
           path: ~/.dependency-check
-          key: dependency-check-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: |
-            dependency-check-${{ runner.os }}-
+          key: dependency-check-${{ runner.os }}-v1
 
       - name: Build application
         run: ./mvnw clean package -DskipTests
@@ -54,13 +49,6 @@ jobs:
           -DdataDirectory=$HOME/.dependency-check
           -DsuppressionFiles=owasp-suppressions.xml
           -DfailBuildOnCVSS=9
-
-      - name: Save OWASP Dependency Check database
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.dependency-check
-          key: dependency-check-${{ runner.os }}-${{ github.run_id }}
 
       - name: Upload Dependency Check report
         if: always()
