@@ -30,6 +30,14 @@ jobs:
           java-version: "21"
           cache: maven
 
+      - name: Restore OWASP Dependency Check database
+        uses: actions/cache@v4
+        with:
+          path: ~/.dependency-check
+          key: dependency-check-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            dependency-check-${{ runner.os }}-
+
       - name: Build application
         run: ./mvnw clean package -DskipTests
 
@@ -40,6 +48,7 @@ jobs:
           ./mvnw
           org.owasp:dependency-check-maven:check
           -DnvdApiKeyEnvironmentVariable=NVD_API_KEY
+          -DdataDirectory=$HOME/.dependency-check
           -DfailBuildOnCVSS=9
 
       - name: Upload Dependency Check report
