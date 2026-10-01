@@ -40,3 +40,4 @@ jobs:
           org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
           -Dsonar.projectKey=elouadiaicha_bilan-azure-quiz-backend
           -Dsonar.organization=elouadiaicha
+          -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml

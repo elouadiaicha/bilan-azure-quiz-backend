@@ -31,7 +31,8 @@ jobs:
           cache: maven
 
       - name: Restore OWASP Dependency Check database
-        uses: actions/cache@v4
+        id: dependency-check-cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.dependency-check
           key: dependency-check-${{ runner.os }}-${{ github.run_id }}
@@ -42,6 +43,8 @@ jobs:
         run: ./mvnw clean package -DskipTests
 
       - name: Run OWASP Dependency Check
+        id: dependency-check
+        continue-on-error: true
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: >
@@ -49,7 +52,15 @@ jobs:
           org.owasp:dependency-check-maven:check
           -DnvdApiKeyEnvironmentVariable=NVD_API_KEY
           -DdataDirectory=$HOME/.dependency-check
+          -DsuppressionFiles=owasp-suppressions.xml
           -DfailBuildOnCVSS=9
+
+      - name: Save OWASP Dependency Check database
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.dependency-check
+          key: dependency-check-${{ runner.os }}-${{ github.run_id }}
 
       - name: Upload Dependency Check report
         if: always()
@@ -57,3 +68,9 @@ jobs:
         with:
           name: dependency-check-report
           path: target/dependency-check-report.html
+
+      - name: Enforce Dependency Check result
+        if: steps.dependency-check.outcome == 'failure'
+        run: |
+          echo "OWASP Dependency Check detected a vulnerability with CVSS >= 9."
+          exit 1
